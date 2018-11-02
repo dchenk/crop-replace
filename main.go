@@ -1,11 +1,21 @@
+// This program loops over each post and replaces occurrences of cropped media attachment URLs that do not
+// exist with URLs of (similar) crops that exist in the GCS bucket being used.
+//
+// It is assumed that the post_content column for the transformed posts is simply text (or HTML) and not
+// a data structure encoded as JSON or serialized by PHP.
+//
+// Before you run this tool, you must first make sure that the "guid" column for all "attachment" posts
+// begins the same way--with a site address.
 package main
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"cloud.google.com/go/storage"
 	"github.com/go-sql-driver/mysql"
@@ -21,6 +31,8 @@ var (
 	dbUser   = flag.String("dbuser", "", "the database user")
 	dbPass   = flag.String("dbpass", "", "the database password")
 	dbPrefix = flag.String("dbprefix", "", "the WP database table prefix")
+
+	guidPrefix = flag.String("guidprefix", "", "the start of each 'guid' in the attachments")
 )
 
 func init() {
@@ -29,9 +41,18 @@ func init() {
 
 func main() {
 	switch {
-	case *project == "", *bucket == "", *dbHost == "", *dbName == "", *dbUser == "", *dbPass == "", *dbPrefix == "":
+	case *project == "", *bucket == "",
+		*dbHost == "", *dbName == "", *dbUser == "", *dbPass == "", *dbPrefix == "",
+		*guidPrefix == "":
 		fmt.Println(chalk.Red.Color("All command line arguments must be set."))
 		flag.PrintDefaults()
+		return
+	}
+
+	if !strings.HasSuffix(*guidPrefix, "/") {
+		fmt.Println(chalk.Red.Color(
+			fmt.Sprintf("The given 'guidprefix' argument %q does not have a trailing slash, which indicates that "+
+				"it might not be what it should be.", *guidPrefix)))
 		return
 	}
 
@@ -54,16 +75,16 @@ func main() {
 
 }
 
+// printExit prints the message msg with the non-nil error and exits the program with code 1.
 func printExit(msg string, err error) {
 	fmt.Println(chalk.Red.Color(fmt.Sprintf("ERROR %v: %v", msg, err)))
 	os.Exit(1)
 }
 
-// An attachmentPost is contains the columns retrieved for our purposes for each post representing an attachment.
+// An attachmentPost contains the fields retrieved for our purposes for each post representing an attachment.
 type attachmentPost struct {
 	ID       int64
-	postName string
-	guid     string
+	fileName string
 }
 
 func getAttachments(db *sql.DB) []attachmentPost {
@@ -79,17 +100,24 @@ func getAttachments(db *sql.DB) []attachmentPost {
 	attachments := make([]attachmentPost, 0, attachmentsCount)
 	i := 0
 	attachmentsRows, err := db.Query(
-		fmt.Sprintf("SELECT ID, post_name, guid from `%s` WHERE post_type = 'attachment'", tableName()))
+		fmt.Sprintf("SELECT ID, guid from `%s` WHERE post_type = 'attachment'", tableName()))
 	if err != nil {
 		printExit("getting attachment rows", err)
 	}
 	for attachmentsRows.Next() {
 		attachments = attachments[:i+1]
 		att := &attachments[i]
-		if err := attachmentsRows.Scan(&att.ID, &att.postName, &att.guid); err != nil {
+		var guid string
+		if err := attachmentsRows.Scan(&att.ID, &guid); err != nil {
 			attachmentsRows.Close()
 			printExit("scanning an attachment row", err)
 		}
+		if !strings.HasPrefix(guid, *guidPrefix) {
+			attachmentsRows.Close()
+			printExit(fmt.Sprintf("The row with ID %d has the guid %q but all attachments must have the same prefix.", att.ID, guid),
+				errors.New("unexpected value for the 'guid' column"))
+		}
+		att.fileName = strings.TrimPrefix(guid, *guidPrefix)
 		i++
 	}
 	if err := attachmentsRows.Close(); err != nil {

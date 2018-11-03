@@ -22,6 +22,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/ttacon/chalk"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 )
 
 var (
@@ -34,8 +35,10 @@ var (
 	dbPass   = flag.String("dbpass", "", "the database password")
 	dbPrefix = flag.String("dbprefix", "", "the WP database table prefix")
 
-	guidPrefix     = flag.String("guidprefix", "", "the start of each 'guid' in the attachments")
-	bucketPrefix   = flag.String("bucketprefix", "", "the prefix that all objects in the bucket have")
+	guidPrefix = flag.String("guidprefix", "",
+		"the start of each 'guid' in the attachments, with a trailing slash")
+	bucketPrefix = flag.String("bucketprefix", "",
+		"the prefix that all objects in the bucket have, without a trailing slash")
 	noBucketPrefix = flag.Bool("nobucketprefix", false, "if true, then no bucket prefix is expected")
 )
 
@@ -55,7 +58,13 @@ func main() {
 
 	if !strings.HasSuffix(*guidPrefix, "/") {
 		printErr(fmt.Sprintf("The given guidprefix argument %q does not have a trailing slash, which indicates "+
-			"that it might not be what it should be.", *guidPrefix), errors.New("invalid command line arguments"))
+			"that it might not be what it should be", *guidPrefix), errInvalidCommand)
+		return
+	}
+
+	if strings.HasSuffix(*bucketPrefix, "/") {
+		printErr(fmt.Sprintf("The given bucketprefix argument %q has a trailing slash but it must not", *bucketPrefix),
+			errInvalidCommand)
 		return
 	}
 
@@ -69,8 +78,10 @@ func main() {
 	}
 	fmt.Println("Retrieved", len(attachments), "attachment posts.")
 
-	ctx := context.Background()
-	client, err := storage.NewClient(ctx)
+	client, err := storage.NewClient(context.Background(),
+		option.WithScopes(storage.ScopeReadOnly),
+		option.WithoutAuthentication(), // All desired objects must be public.
+	)
 	if err != nil {
 		printErr("creating a storage client", err)
 		return
@@ -83,6 +94,8 @@ func main() {
 	}
 
 }
+
+var errInvalidCommand = errors.New("invalid command line arguments")
 
 // An attachment contains the fields retrieved for our purposes for each post representing an attachment
 // along with a list of all of its cropped variants contained in the storage bucket.
@@ -111,7 +124,7 @@ func getAttachments(db *sql.DB) []attachment {
 
 	attachments := make([]attachment, 0, attachmentsCount)
 	i := 0
-	rows, err := db.Query(fmt.Sprintf("SELECT ID, guid from `%s` WHERE post_type = 'attachment'", tableName()))
+	rows, err := db.Query(fmt.Sprintf("SELECT ID, guid from `%s` WHERE post_type = 'attachment' ORDER BY ID", tableName()))
 	if err != nil {
 		printErr("getting attachment rows", err)
 		return nil
@@ -143,24 +156,30 @@ func getAttachments(db *sql.DB) []attachment {
 // checkStorageObjects checks to make sure that all attachments have a corresponding file in the bucket and
 // populates the crops field of each attachment element.
 func checkStorageObjects(handle *storage.BucketHandle, atts []attachment) error {
-	var err error
-	var obj *storage.ObjectAttrs
+	var (
+		err   error
+		obj   *storage.ObjectAttrs
+		query storage.Query
+	)
+
 	for i := range atts {
 		att := &atts[i]
 
+		fileName := *bucketPrefix + att.fileName
+
 		// Extract the extension to query without it.
-		ext := filepath.Ext(att.fileName)
+		ext := filepath.Ext(fileName)
 		if ext == "" {
 			// If there is no extension, it's not likely that we're dealing with an image.
-			// TODO
+			fmt.Println(chalk.Cyan.Color(fmt.Sprintf("Skipping file without extension: %v", att.fileName)))
+			continue
 		}
-		stripped := att.fileName[:len(att.fileName)-len(ext)-1]
+
+		query.Prefix = fileName[:len(att.fileName)-len(ext)-1]
 
 		var exists bool
 
-		it := handle.Objects(context.Background(), &storage.Query{
-			Prefix: *bucketPrefix + stripped,
-		})
+		it := handle.Objects(context.Background(), &query)
 		for {
 			obj, err = it.Next()
 			if err == iterator.Done {
@@ -169,26 +188,30 @@ func checkStorageObjects(handle *storage.BucketHandle, atts []attachment) error 
 			if err != nil {
 				return err
 			}
-			if *bucketPrefix+att.fileName == obj.Name {
+
+			if fileName == obj.Name {
 				exists = true
 				continue
 			}
-			if isCropVariant(att.fileName, obj.Name) { // TODO maybe pass in stripped
+
+			if isCropVariant(query.Prefix, obj.Name, ext) {
 				att.crops = append(att.crops, obj.Name)
 			}
 		}
 
 		if !exists {
-			// TODO
+			printErr(fmt.Sprintf("there is no file named %v", fileName), errMissingFile)
 		}
 	}
 	return nil
 }
 
+var errMissingFile = errors.New("missing file for an attachment")
+
 // isCropVariant says whether the object with name possibleCrop is a variant crop of the object with
 // name objectName.
-func isCropVariant(objectName, possibleCrop string) bool {
-
+func isCropVariant(objectNameStart, possibleCrop, ext string) bool {
+	return false
 }
 
 // printErr prints the message msg with the non-nil error.

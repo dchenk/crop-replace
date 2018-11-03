@@ -50,35 +50,34 @@ func main() {
 	}
 
 	if !strings.HasSuffix(*guidPrefix, "/") {
-		fmt.Println(chalk.Red.Color(
-			fmt.Sprintf("The given 'guidprefix' argument %q does not have a trailing slash, which indicates that "+
-				"it might not be what it should be.", *guidPrefix)))
+		printErr(fmt.Sprintf("The given guidprefix argument %q does not have a trailing slash, which indicates "+
+			"that it might not be what it should be.", *guidPrefix), errors.New("invalid command line arguments"))
 		return
 	}
 
 	db := makeConn(*dbHost, *dbName, *dbUser, *dbPass)
+	defer db.Close()
 
 	attachments := getAttachments(db)
 	if len(attachments) == 0 {
 		fmt.Println("There aren't any attachments to sync up.")
 		return
 	}
+	fmt.Println("Retrieved", len(attachments), "attachment posts.")
 
 	ctx := context.Background()
 	client, err := storage.NewClient(ctx)
 	if err != nil {
-		printExit("creating a storage client", err)
+		printErr("creating a storage client", err)
+		return
 	}
 
 	bucketHandle := client.Bucket(*bucket)
-	_ = bucketHandle
+	if err := checkStorageObjects(bucketHandle, attachments); err != nil {
+		printErr("could not check for storage objects", err)
+		return
+	}
 
-}
-
-// printExit prints the message msg with the non-nil error and exits the program with code 1.
-func printExit(msg string, err error) {
-	fmt.Println(chalk.Red.Color(fmt.Sprintf("ERROR %v: %v", msg, err)))
-	os.Exit(1)
 }
 
 // An attachmentPost contains the fields retrieved for our purposes for each post representing an attachment.
@@ -87,55 +86,75 @@ type attachmentPost struct {
 	fileName string
 }
 
+// getAttachments retrieves all of the attachment posts from the database table specified.
 func getAttachments(db *sql.DB) []attachmentPost {
 	var attachmentsCount int64
 	if err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM `%s` WHERE post_type = 'attachment'", tableName())).
 		Scan(&attachmentsCount); err != nil {
-		printExit("counting attachment rows", err)
+		printErr("counting attachment rows", err)
+		return nil
 	}
 	if attachmentsCount == 0 {
 		return nil
 	}
 
+	// guidPrefixTrimmed is the guid prefix without the trailing slash.
+	guidPrefixTrimmed := (*guidPrefix)[:len(*guidPrefix)-1]
+
 	attachments := make([]attachmentPost, 0, attachmentsCount)
 	i := 0
-	attachmentsRows, err := db.Query(
-		fmt.Sprintf("SELECT ID, guid from `%s` WHERE post_type = 'attachment'", tableName()))
+	rows, err := db.Query(fmt.Sprintf("SELECT ID, guid from `%s` WHERE post_type = 'attachment'", tableName()))
 	if err != nil {
-		printExit("getting attachment rows", err)
+		printErr("getting attachment rows", err)
+		return nil
 	}
-	for attachmentsRows.Next() {
+	for rows.Next() {
 		attachments = attachments[:i+1]
 		att := &attachments[i]
 		var guid string
-		if err := attachmentsRows.Scan(&att.ID, &guid); err != nil {
-			attachmentsRows.Close()
-			printExit("scanning an attachment row", err)
+		if err := rows.Scan(&att.ID, &guid); err != nil {
+			printErr("scanning an attachment row", err)
+			return nil
 		}
 		if !strings.HasPrefix(guid, *guidPrefix) {
-			attachmentsRows.Close()
-			printExit(fmt.Sprintf("The row with ID %d has the guid %q but all attachments must have the same prefix.", att.ID, guid),
+			printErr(fmt.Sprintf("The row with ID %d has the guid %q but all attachments must have the same prefix.", att.ID, guid),
 				errors.New("unexpected value for the 'guid' column"))
+			return nil
 		}
-		att.fileName = strings.TrimPrefix(guid, *guidPrefix)
+		// fileName will have guidPrefix removed but with a leading slash.
+		att.fileName = strings.TrimPrefix(guid, guidPrefixTrimmed)
 		i++
 	}
-	if err := attachmentsRows.Close(); err != nil {
-		printExit("closing query rows", err)
+	if err := rows.Close(); err != nil {
+		printErr("closing query rows", err)
 	}
 
 	return attachments
 }
 
+// checkStorageObjects checks to make sure that all attachments have a corresponding file in the bucket.
+func checkStorageObjects(handle *storage.BucketHandle, atts []attachmentPost) error {
+	return nil
+}
+
+// printErr prints the message msg with the non-nil error.
+func printErr(msg string, err error) {
+	fmt.Println(chalk.Red.Color(fmt.Sprintf("ERROR %v: %v", msg, err)))
+}
+
+// makeConn creates a sql.DB object to use with connections to the database.
+// The program will terminate if a connection cannot be established.
 func makeConn(host, dbName, user, pass string) *sql.DB {
 	config := mysql.NewConfig()
+	config.Net = "tcp"
 	config.Addr = host
 	config.DBName = dbName
 	config.User = user
 	config.Passwd = pass
 	db, err := sql.Open("mysql", config.FormatDSN())
 	if err != nil {
-		printExit("connecting to database", err)
+		printErr("connecting to database", err)
+		os.Exit(1)
 	}
 	return db
 }

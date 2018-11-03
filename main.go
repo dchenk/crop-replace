@@ -15,11 +15,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"cloud.google.com/go/storage"
 	"github.com/go-sql-driver/mysql"
 	"github.com/ttacon/chalk"
+	"google.golang.org/api/iterator"
 )
 
 var (
@@ -32,7 +34,9 @@ var (
 	dbPass   = flag.String("dbpass", "", "the database password")
 	dbPrefix = flag.String("dbprefix", "", "the WP database table prefix")
 
-	guidPrefix = flag.String("guidprefix", "", "the start of each 'guid' in the attachments")
+	guidPrefix     = flag.String("guidprefix", "", "the start of each 'guid' in the attachments")
+	bucketPrefix   = flag.String("bucketprefix", "", "the prefix that all objects in the bucket have")
+	noBucketPrefix = flag.Bool("nobucketprefix", false, "if true, then no bucket prefix is expected")
 )
 
 func init() {
@@ -43,7 +47,7 @@ func main() {
 	switch {
 	case *project == "", *bucket == "",
 		*dbHost == "", *dbName == "", *dbUser == "", *dbPass == "", *dbPrefix == "",
-		*guidPrefix == "":
+		*guidPrefix == "", *bucketPrefix == "" && !*noBucketPrefix:
 		fmt.Println(chalk.Red.Color("All command line arguments must be set."))
 		flag.PrintDefaults()
 		return
@@ -80,14 +84,18 @@ func main() {
 
 }
 
-// An attachmentPost contains the fields retrieved for our purposes for each post representing an attachment.
-type attachmentPost struct {
+// An attachment contains the fields retrieved for our purposes for each post representing an attachment
+// along with a list of all of its cropped variants contained in the storage bucket.
+type attachment struct {
 	ID       int64
 	fileName string
+
+	// crops has strings such as "600x600" and "600x340"
+	crops []string
 }
 
 // getAttachments retrieves all of the attachment posts from the database table specified.
-func getAttachments(db *sql.DB) []attachmentPost {
+func getAttachments(db *sql.DB) []attachment {
 	var attachmentsCount int64
 	if err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM `%s` WHERE post_type = 'attachment'", tableName())).
 		Scan(&attachmentsCount); err != nil {
@@ -101,7 +109,7 @@ func getAttachments(db *sql.DB) []attachmentPost {
 	// guidPrefixTrimmed is the guid prefix without the trailing slash.
 	guidPrefixTrimmed := (*guidPrefix)[:len(*guidPrefix)-1]
 
-	attachments := make([]attachmentPost, 0, attachmentsCount)
+	attachments := make([]attachment, 0, attachmentsCount)
 	i := 0
 	rows, err := db.Query(fmt.Sprintf("SELECT ID, guid from `%s` WHERE post_type = 'attachment'", tableName()))
 	if err != nil {
@@ -132,9 +140,55 @@ func getAttachments(db *sql.DB) []attachmentPost {
 	return attachments
 }
 
-// checkStorageObjects checks to make sure that all attachments have a corresponding file in the bucket.
-func checkStorageObjects(handle *storage.BucketHandle, atts []attachmentPost) error {
+// checkStorageObjects checks to make sure that all attachments have a corresponding file in the bucket and
+// populates the crops field of each attachment element.
+func checkStorageObjects(handle *storage.BucketHandle, atts []attachment) error {
+	var err error
+	var obj *storage.ObjectAttrs
+	for i := range atts {
+		att := &atts[i]
+
+		// Extract the extension to query without it.
+		ext := filepath.Ext(att.fileName)
+		if ext == "" {
+			// If there is no extension, it's not likely that we're dealing with an image.
+			// TODO
+		}
+		stripped := att.fileName[:len(att.fileName)-len(ext)-1]
+
+		var exists bool
+
+		it := handle.Objects(context.Background(), &storage.Query{
+			Prefix: *bucketPrefix + stripped,
+		})
+		for {
+			obj, err = it.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if *bucketPrefix+att.fileName == obj.Name {
+				exists = true
+				continue
+			}
+			if isCropVariant(att.fileName, obj.Name) { // TODO maybe pass in stripped
+				att.crops = append(att.crops, obj.Name)
+			}
+		}
+
+		if !exists {
+			// TODO
+		}
+	}
 	return nil
+}
+
+// isCropVariant says whether the object with name possibleCrop is a variant crop of the object with
+// name objectName.
+func isCropVariant(objectName, possibleCrop string) bool {
+
 }
 
 // printErr prints the message msg with the non-nil error.

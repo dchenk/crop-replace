@@ -157,7 +157,7 @@ func getAttachments(db *sql.DB) []attachment {
 			return nil
 		}
 
-		// Extract the extension.
+		// Extract the extension, including the leading dot.
 		att.ext = filepath.Ext(guid)
 		if att.ext == "" {
 			// If there is no extension, it's not likely that we're dealing with an image.
@@ -201,8 +201,8 @@ func checkStorageObjects(handle *storage.BucketHandle, atts []attachment) error 
 
 		fileName := *bucketPrefix + att.fileName
 
-		// Trim out the .extension
-		query.Prefix = fileName[:len(att.fileName)-len(att.ext)-1]
+		// Trim out the extension.
+		query.Prefix = fileName[:len(fileName)-len(att.ext)]
 
 		var exists bool
 
@@ -243,7 +243,7 @@ func getCropVariant(fileNameEnd, ext string) *crop {
 	if fileNameEnd == "" || fileNameEnd[0] != '-' {
 		return nil
 	}
-	trimmed := strings.TrimSuffix(fileNameEnd[1:], "."+ext)
+	trimmed := strings.TrimSuffix(fileNameEnd[1:], ext)
 	split := strings.Split(trimmed, "x")
 	if len(split) != 2 {
 		return nil
@@ -331,7 +331,7 @@ func replaceCrops(content string, files []attachment) string {
 	for i := range files {
 		file := &files[i]
 		lenName := len(file.fileName)
-		trimmed := file.fileName[:lenName-len(file.ext)-1]
+		trimmed := file.fileName[:lenName-len(file.ext)]
 		contentTemp := content
 		for indx := strings.Index(contentTemp, trimmed); indx != -1; {
 			fmt.Println("indx", indx)

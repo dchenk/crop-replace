@@ -349,19 +349,34 @@ func replaceCrops(content string, files []attachment) string {
 		file := &files[i]
 		lenName := len(file.fileName)
 		trimmed := file.fileName[:lenName-len(file.ext)]
-		contentTemp := content
-		for indx := strings.Index(contentTemp, trimmed); indx != -1; {
-			fmt.Println("indx", indx)
-			// content = strings.Replace(content, "", "", -1)
-			contentTemp = contentTemp[indx+lenName:]
+		//contentTemp := content
+		indexes := stringIndexes(content, trimmed)
+		for _, indx := range indexes {
+			_ = indx
 		}
+		//for indx := strings.Index(contentTemp, trimmed); indx != -1; {
+		//	fmt.Println("indx", indx)
+		//	// content = strings.Replace(content, "", "", -1)
+		//	contentTemp = contentTemp[indx+lenName:]
+		//}
 	}
 	return content
 }
 
 // stringIndexes returns the indexes of s at which there is substr.
-func stringIndexes(s, substr string) []int {
-	return nil
+func stringIndexes(s, substr string) (indexes []int) {
+	offset := 0
+	for {
+		i := strings.Index(s, substr)
+		if i == -1 {
+			return
+		}
+		indexes = append(indexes, offset+i)
+		move := i + len(substr)
+		offset += move
+		s = s[move:]
+	}
+	return
 }
 
 // printErr prints the message msg with the non-nil error.

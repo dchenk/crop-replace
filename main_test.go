@@ -32,3 +32,32 @@ func TestGetCropVariant(t *testing.T) {
 		})
 	}
 }
+
+func TestStringIndexes(t *testing.T) {
+	cases := []struct {
+		s, substr string
+		indexes   []int
+	}{
+		{"abc", "n", nil},
+		{"abc", "a", []int{0}},
+		{"abac", "a", []int{0, 2}},
+		{"aaabc", "aa", []int{0}},
+		{"aabgaa", "aa", []int{0, 4}},
+		{"rabcabcd", "abc", []int{1, 4}},
+		{"rrabcaabcd", "abc", []int{2, 6}},
+		{"rrabaabcd", "abc", []int{5}},
+	}
+	for i, tc := range cases {
+		t.Run("case_"+strconv.Itoa(i), func(t *testing.T) {
+			got := stringIndexes(tc.s, tc.substr)
+			if len(got) != len(tc.indexes) {
+				t.Errorf("got %v but expected %v", got, tc.indexes)
+			}
+			for j := range got {
+				if got[j] != tc.indexes[j] {
+					t.Errorf("got %v but expected %v", got, tc.indexes)
+				}
+			}
+		})
+	}
+}

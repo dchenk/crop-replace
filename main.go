@@ -103,9 +103,13 @@ var errInvalidCommand = errors.New("invalid command line arguments")
 type attachment struct {
 	ID       int64
 	fileName string
+	ext      string
+	crops    []crop
+}
 
-	// crops has strings such as "600x600" and "600x340"
-	crops []string
+type crop struct {
+	str           string // str contains the dimensions in the form "600x600" or "600x340"
+	width, height uint64
 }
 
 // getAttachments retrieves all of the attachment posts from the database table specified.
@@ -124,31 +128,42 @@ func getAttachments(db *sql.DB) []attachment {
 	guidPrefixTrimmed := (*guidPrefix)[:len(*guidPrefix)-1]
 
 	attachments := make([]attachment, 0, attachmentsCount)
-	i := 0
+
 	rows, err := db.Query(fmt.Sprintf("SELECT ID, guid from `%s` WHERE post_type = 'attachment' ORDER BY ID", tableName()))
 	if err != nil {
 		printErr("getting attachment rows", err)
 		return nil
 	}
+	defer rows.Close()
 	for rows.Next() {
-		attachments = attachments[:i+1]
-		att := &attachments[i]
+		var att attachment
 		var guid string
 		if err := rows.Scan(&att.ID, &guid); err != nil {
 			printErr("scanning an attachment row", err)
 			return nil
 		}
+
+		// Extract the extension.
+		att.ext = filepath.Ext(guid)
+		if att.ext == "" {
+			// If there is no extension, it's not likely that we're dealing with an image.
+			fmt.Println(chalk.Cyan.Color(fmt.Sprintf("Skipping file without extension: %v", att.fileName)))
+			continue
+		}
+
 		if !strings.HasPrefix(guid, *guidPrefix) {
 			printErr(fmt.Sprintf("The row with ID %d has the guid %q but all attachments must have the same prefix.", att.ID, guid),
 				errors.New("unexpected value for the 'guid' column"))
 			return nil
 		}
-		// fileName will have guidPrefix removed but with a leading slash.
+
+		// fileName will have guidPrefix removed but will have a leading slash.
 		att.fileName = strings.TrimPrefix(guid, guidPrefixTrimmed)
-		i++
+
+		attachments = append(attachments, att)
 	}
-	if err := rows.Close(); err != nil {
-		printErr("closing query rows", err)
+	if err := rows.Err(); err != nil {
+		printErr("looping over query rows", err)
 	}
 
 	return attachments
@@ -166,17 +181,14 @@ func checkStorageObjects(handle *storage.BucketHandle, atts []attachment) error 
 	for i := range atts {
 		att := &atts[i]
 
-		fileName := *bucketPrefix + att.fileName
-
-		// Extract the extension to query without it.
-		ext := filepath.Ext(fileName)
-		if ext == "" {
-			// If there is no extension, it's not likely that we're dealing with an image.
-			fmt.Println(chalk.Cyan.Color(fmt.Sprintf("Skipping file without extension: %v", att.fileName)))
-			continue
+		if att.ext == "" {
+			continue // Must be checked already, so this is just in case.
 		}
 
-		query.Prefix = fileName[:len(att.fileName)-len(ext)-1]
+		fileName := *bucketPrefix + att.fileName
+
+		// Trim out the .extension
+		query.Prefix = fileName[:len(att.fileName)-len(att.ext)-1]
 
 		var exists bool
 
@@ -195,8 +207,8 @@ func checkStorageObjects(handle *storage.BucketHandle, atts []attachment) error 
 				continue
 			}
 
-			if dimensions := getCropVariant(strings.TrimPrefix(obj.Name, query.Prefix), ext); dimensions != nil {
-				//att.crops = append(att.crops, obj.Name)
+			if dimensions := getCropVariant(strings.TrimPrefix(obj.Name, query.Prefix), att.ext); dimensions != nil {
+				att.crops = append(att.crops, *dimensions)
 			}
 		}
 
@@ -211,13 +223,14 @@ var errMissingFile = errors.New("missing file for an attachment")
 
 // getCropVariant says whether the object with the name ending in fileNameEnd is a variant crop of an object
 // whose name without .ext has been trimmed out of fileNameEnd.
-// If the file name gives a crop variant, this function returns the dimensions in the slice of length 2, but
-// otherwise it returns nil.
-func getCropVariant(fileNameEnd, ext string) []uint64 {
+// If the file name gives a crop variant, this function returns the dimensions of the crop, but otherwise it
+// returns nil.
+func getCropVariant(fileNameEnd, ext string) *crop {
 	if fileNameEnd == "" || fileNameEnd[0] != '-' {
 		return nil
 	}
-	split := strings.Split(strings.TrimSuffix(fileNameEnd[1:], "."+ext), "x")
+	trimmed := strings.TrimSuffix(fileNameEnd[1:], "."+ext)
+	split := strings.Split(trimmed, "x")
 	if len(split) != 2 {
 		return nil
 	}
@@ -229,7 +242,33 @@ func getCropVariant(fileNameEnd, ext string) []uint64 {
 	if err != nil {
 		return nil
 	}
-	return []uint64{width, height}
+	return &crop{str: trimmed, width: width, height: height}
+}
+
+// replaceImageCrops loops through each post with post_type = postType and replaces occurrences of usage of each
+// non-existent image crop with an existing variant of the image.
+func replaceImageCrops(db *sql.DB, postType string, files []attachment) error {
+	rows, err := db.Query(fmt.Sprintf("SELECT ID, post_content FROM `%v` WHERE post_type = ? ORDER BY ID", tableName()),
+		postType)
+	if err != nil {
+		return fmt.Errorf("could not query for rows; %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ID int64
+		var content string
+		if err := rows.Scan(&ID, &content); err != nil {
+			return err
+		}
+		for i := range files {
+			file := &files[i]
+			_ = i
+			trimmed := files[i].fileName[:len(file.ext)+1]
+			//indx := strings.Index(content, )
+			//if strings.Contains(content, files[i].c)
+		}
+	}
+	return nil
 }
 
 // printErr prints the message msg with the non-nil error.

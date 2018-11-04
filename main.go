@@ -248,9 +248,34 @@ func getCropVariant(fileNameEnd, ext string) *crop {
 // replaceImageCrops loops through each post with post_type = postType and replaces occurrences of usage of each
 // non-existent image crop with an existing variant of the image.
 func replaceImageCrops(db *sql.DB, postType string, files []attachment) error {
-	rows, err := db.Query(fmt.Sprintf("SELECT ID, post_content FROM `%v` WHERE post_type = ? ORDER BY ID", tableName()),
+	var rows *sql.Rows
+	var updateQ *sql.Stmt
+	rollback := func(tx *sql.Tx) {
+		if err := updateQ.Close(); err != nil {
+			printErr("closing prepared statement before rollback", err)
+		}
+		if rows != nil {
+			if err := rows.Close(); err != nil {
+				printErr("closing rows before rollback", err)
+			}
+		}
+		if err := tx.Rollback(); err != nil {
+			printErr("rolling back after failure", err)
+		}
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("could not begin transaction; %v", err)
+	}
+	updateQ, err = tx.Prepare(fmt.Sprintf("UPDATE `%s` SET post_content = ? WHERE ID = ?", tableName())
+	if err != nil {
+		rollback(tx)
+		return fmt.Errorf("could not prepare update query; %v", err)
+	}
+	rows, err = tx.Query(fmt.Sprintf("SELECT ID, post_content FROM `%s` WHERE post_type = ? ORDER BY ID", tableName()),
 		postType)
 	if err != nil {
+		rollback(tx)
 		return fmt.Errorf("could not query for rows; %v", err)
 	}
 	defer rows.Close()
@@ -258,17 +283,48 @@ func replaceImageCrops(db *sql.DB, postType string, files []attachment) error {
 		var ID int64
 		var content string
 		if err := rows.Scan(&ID, &content); err != nil {
+			rollback(tx)
 			return err
 		}
-		for i := range files {
-			file := &files[i]
-			_ = i
-			trimmed := files[i].fileName[:len(file.ext)+1]
-			//indx := strings.Index(content, )
-			//if strings.Contains(content, files[i].c)
+		got, err := replaceCrops(content, files)
+		if err != nil {
+			rollback(tx)
+			return err
+		}
+		if got != content {
+			res, err := updateQ.Exec(got, ID)
+			if err != nil {
+				rollback(tx)
+				return fmt.Errorf("could not update row %d; %v", ID, err)
+			}
+			affected, err := res.RowsAffected()
+			if err != nil {
+				rollback(tx)
+				return fmt.Errorf("could not check for rows affected; %v", err)
+			}
+			if affected != 1 {
+				rollback(tx)
+				return fmt.Errorf("after update results say %d rows affected", affected)
+			}
 		}
 	}
-	return nil
+	if err := rows.Err(); err != nil {
+		rollback(tx)
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		printErr("closing rows before commit", err)
+	}
+	return tx.Commit()
+}
+
+func replaceCrops(content string, files []attachment) (string, error) {
+	for i := range files {
+		file := &files[i]
+		trimmed := files[i].fileName[:len(file.ext)+1]
+		//indx := strings.Index(content, )
+		//if strings.Contains(content, files[i].c)
+	}
 }
 
 // printErr prints the message msg with the non-nil error.

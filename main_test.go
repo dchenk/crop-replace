@@ -12,12 +12,18 @@ func TestGetCropVariant(t *testing.T) {
 	}{
 		{"-600x340.png", ".png", &crop{"600x340", 600, 340}},
 		{"-1024x768.jpeg", ".jpeg", &crop{"1024x768", 1024, 768}},
-		{"_1024x768.jpeg", ".jpeg", nil},
+		{"-600x340.png_more-stuff", ".png", &crop{"600x340", 600, 340}},
+		{"-500x370.jpg'=anything-can-follow", ".jpg", &crop{"500x370", 500, 370}},
+		{"-x.jpg", ".jpg", nil},
+		{"-.png", ".png", nil},
 		{"-850x1080x900.jpg", ".jpg", nil},
+		{"-850x1080.900.jpg", ".jpg", nil},
 		{"-file-other.jpeg", ".jpeg", nil},
 		{"-1024x768.jpeg", ".png", nil},
+		{"_1024x768.jpeg", ".jpeg", nil},
 		{"_something-else.jpg", ".jpg", nil},
 		{"234x424.png", ".png", nil},
+		{".jpeg", ".jpeg", nil},
 	}
 	for i, tc := range cases {
 		t.Run("case_"+strconv.Itoa(i), func(t *testing.T) {

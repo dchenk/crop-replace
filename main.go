@@ -259,20 +259,51 @@ func getCropVariant(fileNameEnd, ext string) *crop {
 	if fileNameEnd == "" || fileNameEnd[0] != '-' {
 		return nil
 	}
-	trimmed := strings.TrimSuffix(fileNameEnd[1:], ext)
-	split := strings.Split(trimmed, "x")
-	if len(split) != 2 {
+	var wBytes, hBytes []byte
+	var wSet, hSet bool
+charLoop:
+	for i := 1; i < len(fileNameEnd); i++ {
+		c := fileNameEnd[i]
+		switch {
+		case wSet && hSet:
+			break charLoop
+		case c >= '0' && c <= '9':
+			if !wSet {
+				wBytes = append(wBytes, c)
+			} else if !hSet {
+				hBytes = append(hBytes, c)
+			} else {
+				return nil // We have "###x###.###" or "###x###x###"
+			}
+		case c == 'x':
+			wSet = true
+		case c == '.':
+			hSet = true
+		default:
+			return nil
+		}
+	}
+	if len(wBytes) == 0 || len(hBytes) == 0 {
 		return nil
 	}
-	width, err := strconv.ParseUint(split[0], 10, 64)
+	w, h := string(wBytes), string(hBytes)
+	if !strings.HasPrefix(fileNameEnd, "-"+w+"x"+h+ext) {
+		// If the string does not have this prefix, then it cannot be a variant crop.
+		// It could have some other extension, or it could have something else in its name following
+		// whatever wxh string it has after fileNameEnd.
+		return nil
+	}
+	width, err := strconv.ParseUint(w, 10, 64)
 	if err != nil {
+		fmt.Printf("Expecting to be able to parse a number out of %q; %v\n", w, err)
 		return nil
 	}
-	height, err := strconv.ParseUint(split[1], 10, 64)
+	height, err := strconv.ParseUint(h, 10, 64)
 	if err != nil {
+		fmt.Printf("Expecting to be able to parse a number out of %q; %v\n", h, err)
 		return nil
 	}
-	return &crop{str: trimmed, width: width, height: height}
+	return &crop{str: w + "x" + h, width: width, height: height}
 }
 
 // replaceImageCrops loops through each post with post_type = postType and replaces occurrences of usage of each
@@ -345,20 +376,18 @@ func replaceImageCrops(db *sql.DB, postType string, files []attachment) error {
 }
 
 func replaceCrops(content string, files []attachment) string {
+	replacements := make(map[string]string, 4)
 	for i := range files {
 		file := &files[i]
-		lenName := len(file.fileName)
-		trimmed := file.fileName[:lenName-len(file.ext)]
-		//contentTemp := content
+		trimmed := file.fileName[:len(file.fileName)-len(file.ext)]
 		indexes := stringIndexes(content, trimmed)
+		lenTrimmed := len(trimmed)
 		for _, indx := range indexes {
-			_ = indx
+			_, _ = lenTrimmed, indx // TODO
 		}
-		//for indx := strings.Index(contentTemp, trimmed); indx != -1; {
-		//	fmt.Println("indx", indx)
-		//	// content = strings.Replace(content, "", "", -1)
-		//	contentTemp = contentTemp[indx+lenName:]
-		//}
+	}
+	for origFile, newFile := range replacements {
+		content = strings.Replace(content, origFile, newFile, -1)
 	}
 	return content
 }

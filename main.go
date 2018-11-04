@@ -40,6 +40,8 @@ var (
 	bucketPrefix = flag.String("bucketprefix", "",
 		"the prefix that all objects in the bucket have, without a trailing slash")
 	noBucketPrefix = flag.Bool("nobucketprefix", false, "if true, then no bucket prefix is expected")
+
+	postType = flag.String("posttype", "post", "the post_type to transform")
 )
 
 func init() {
@@ -83,6 +85,13 @@ func main() {
 		return
 	}
 
+	switch *postType {
+	case "post", "page":
+	default:
+		printErr("The posttype argument must be either post or page", errInvalidCommand)
+		return
+	}
+
 	db := makeConn(*dbHost, *dbName, *dbUser, *dbPass)
 	defer db.Close()
 
@@ -106,6 +115,13 @@ func main() {
 	if err := checkStorageObjects(bucketHandle, attachments); err != nil {
 		printErr("could not check for storage objects", err)
 		return
+	}
+
+	fmt.Println("Finished listing crop variants in bucket.")
+
+	err = replaceImageCrops(db, *postType, attachments)
+	if err != nil {
+		printErr("replacing images", err)
 	}
 
 }
@@ -301,6 +317,7 @@ func replaceImageCrops(db *sql.DB, postType string, files []attachment) error {
 		}
 		got := replaceCrops(content, files)
 		if got != content {
+			fmt.Println("Updating", ID)
 			res, err := update.Exec(got, ID)
 			if err != nil {
 				rollback(tx)
@@ -340,6 +357,11 @@ func replaceCrops(content string, files []attachment) string {
 		}
 	}
 	return content
+}
+
+// stringIndexes returns the indexes of s at which there is substr.
+func stringIndexes(s, substr string) []int {
+	return nil
 }
 
 // printErr prints the message msg with the non-nil error.

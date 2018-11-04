@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"cloud.google.com/go/storage"
@@ -194,8 +195,8 @@ func checkStorageObjects(handle *storage.BucketHandle, atts []attachment) error 
 				continue
 			}
 
-			if isCropVariant(query.Prefix, obj.Name, ext) {
-				att.crops = append(att.crops, obj.Name)
+			if dimensions := getCropVariant(strings.TrimPrefix(obj.Name, query.Prefix), ext); dimensions != nil {
+				//att.crops = append(att.crops, obj.Name)
 			}
 		}
 
@@ -208,10 +209,27 @@ func checkStorageObjects(handle *storage.BucketHandle, atts []attachment) error 
 
 var errMissingFile = errors.New("missing file for an attachment")
 
-// isCropVariant says whether the object with name possibleCrop is a variant crop of the object with
-// name objectName.
-func isCropVariant(objectNameStart, possibleCrop, ext string) bool {
-	return false
+// getCropVariant says whether the object with the name ending in fileNameEnd is a variant crop of an object
+// whose name without .ext has been trimmed out of fileNameEnd.
+// If the file name gives a crop variant, this function returns the dimensions in the slice of length 2, but
+// otherwise it returns nil.
+func getCropVariant(fileNameEnd, ext string) []uint64 {
+	if fileNameEnd == "" || fileNameEnd[0] != '-' {
+		return nil
+	}
+	split := strings.Split(strings.TrimSuffix(fileNameEnd[1:], "."+ext), "x")
+	if len(split) != 2 {
+		return nil
+	}
+	width, err := strconv.ParseUint(split[0], 10, 64)
+	if err != nil {
+		return nil
+	}
+	height, err := strconv.ParseUint(split[1], 10, 64)
+	if err != nil {
+		return nil
+	}
+	return []uint64{width, height}
 }
 
 // printErr prints the message msg with the non-nil error.

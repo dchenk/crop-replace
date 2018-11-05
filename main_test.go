@@ -145,6 +145,21 @@ func TestFindSuitableCrop(t *testing.T) {
 			good:   false,
 			okDiff: 0,
 		},
+		{
+			inPost: &crop{"500x450", 500, 450},
+			haveInBucket: []crop{
+				{"410x360", 410, 360},
+				{"505x500", 505, 500},
+			},
+			good:   false,
+			okDiff: 1,
+		},
+		{
+			inPost:       &crop{"500x450", 500, 450},
+			haveInBucket: nil,
+			good:         false,
+			okDiff:       -1,
+		},
 	}
 	for i, tc := range cases {
 		t.Run("case_"+strconv.Itoa(i), func(t *testing.T) {

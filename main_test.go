@@ -67,3 +67,51 @@ func TestStringIndexes(t *testing.T) {
 		})
 	}
 }
+
+func TestReplaceCrops(t *testing.T) {
+	atts := []attachment{
+		{
+			fileName: "abc.png", ext: ".png", crops: nil,
+		},
+		{
+			fileName: "bcd.png", ext: ".png",
+			crops: []crop{
+				{"200x180", 200, 180},
+				{"400x320", 400, 320},
+			},
+		},
+		{
+			fileName: "rjj.jpeg", ext: ".jpeg",
+			crops: []crop{
+				{"600x450", 600, 450},
+			},
+		},
+		{
+			fileName: "rrrr-aa.png", ext: ".png",
+			crops: []crop{
+				{"200x180", 200, 180},
+			},
+		},
+	}
+	cases := []struct {
+		original string
+		files    []attachment
+		desired  string
+	}{
+		{"abc.png", atts, "abc.png"},                         // No replacement needed
+		{"<img src='abc.png'>", atts, "<img src='abc.png'>"}, // No replacement needed
+		{"abc-400x300.png", atts, "abc.png"},                 // Default to un-cropped
+		{"bcd-210x195.png", atts, "bcd-200x180.png"},
+		{"HELLO WORLD bcd-210x195.png", atts, "HELLO WORLD bcd-200x180.png"},
+		{"Hi: bcd-210x195.png\nText...", atts, "Hi: bcd-200x180.png\nText..."},
+		{"bcd-210x195.png\nText...", atts, "bcd-200x180.png\nText..."},
+	}
+	for i, tc := range cases {
+		t.Run("case_"+strconv.Itoa(i), func(t *testing.T) {
+			got := replaceCrops(tc.original, tc.files)
+			if got != tc.desired {
+				t.Errorf("got\n\t%v\nbut expected\n\t%v", got, tc.desired)
+			}
+		})
+	}
+}

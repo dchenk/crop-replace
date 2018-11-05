@@ -14,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -376,14 +377,44 @@ func replaceImageCrops(db *sql.DB, postType string, files []attachment) error {
 }
 
 func replaceCrops(content string, files []attachment) string {
-	replacements := make(map[string]string, 4)
 	for i := range files {
-		file := &files[i]
-		trimmed := file.fileName[:len(file.fileName)-len(file.ext)]
-		indexes := stringIndexes(content, trimmed)
-		lenTrimmed := len(trimmed)
-		for _, indx := range indexes {
-			_, _ = lenTrimmed, indx // TODO
+		content = replaceContentSingle(content, &files[i])
+	}
+	return content
+}
+
+// widthDiffTolerance is the maximum tolerated difference in width between replaced images.
+const widthDiffTolerance float64 = 35.0
+
+func replaceContentSingle(content string, file *attachment) string {
+	trimmed := file.fileName[:len(file.fileName)-len(file.ext)] // removes the trailing dot and extension
+	lenTrimmed := len(trimmed)
+	replacements := make(map[string]string, 4)
+	for _, indx := range stringIndexes(content, trimmed) {
+		crop := getCropVariant(content[indx+lenTrimmed:], file.ext)
+		if crop != nil {
+			good := false
+			okDiff := -1
+			for i := range file.crops {
+				existing := &file.crops[i]
+				if crop.width == existing.width && crop.height == existing.height {
+					good = true
+					break
+				}
+				if math.Abs(float64(crop.width-existing.width)/float64(crop.width))*100.0 <= widthDiffTolerance {
+					okDiff = i
+				}
+			}
+			if !good {
+				old := trimmed + crop.str + file.ext
+				// If there is no crop that's within the tolerated range, use the un-cropped variant.
+				if okDiff > -1 {
+					fmt.Printf("Using width %v instead of %v for %s\n", file.crops[okDiff].width, crop.width, file.fileName)
+					replacements[old] = file.fileName
+				} else {
+					replacements[old] = file.fileName
+				}
+			}
 		}
 	}
 	for origFile, newFile := range replacements {

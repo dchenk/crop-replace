@@ -413,8 +413,8 @@ func replaceContentSingle(content string, file *attachment) string {
 }
 
 // findSuitableCrop checks if there is a suitable crop in the bucket for the crop found in a post.
-// If the crop in the post is already in the bucket, a true is returned. If there isn't, then okDiff is an index
-// to a close variant is returned if there is a close variant; otherwise the int returned is -1.
+// If the crop in the post is already in the bucket, a true is returned. If it isn't, then okDiff is an index
+// to a close variant in the haveInBucket slice if there is a close variant; otherwise the int returned is -1.
 func findSuitableCrop(inPost *crop, haveInBucket []crop) (good bool, okDiff int) {
 	okDiff = -1
 	type variant struct {
@@ -428,7 +428,7 @@ func findSuitableCrop(inPost *crop, haveInBucket []crop) (good bool, okDiff int)
 			good = true
 			return
 		}
-		diff := math.Abs(float64(inPost.width-existing.width)/float64(inPost.width)) * 100.0
+		diff := math.Abs(float64(inPost.width)-float64(existing.width)) / float64(inPost.width) * 100.0
 		if diff <= widthDiffTolerance {
 			okVariants = append(okVariants, variant{diff: diff, indx: i})
 		}
@@ -438,10 +438,10 @@ func findSuitableCrop(inPost *crop, haveInBucket []crop) (good bool, okDiff int)
 		// Find the closest variant.
 		okDiff = okVariants[0].indx
 		diff := okVariants[0].diff
-		for i := 1; i < len(okVariants); i++ {
-			if okVariants[i].diff < diff {
-				okDiff = okVariants[i].indx
-				diff = okVariants[i].diff
+		for _, variant := range okVariants[1:] {
+			if variant.diff < diff {
+				okDiff = variant.indx
+				diff = variant.diff
 			}
 		}
 	}

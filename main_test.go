@@ -52,12 +52,13 @@ func TestStringIndexes(t *testing.T) {
 		{"rabcabcd", "abc", []int{1, 4}},
 		{"rrabcaabcd", "abc", []int{2, 6}},
 		{"rrabaabcd", "abc", []int{5}},
+		{"\tabc_deabc_dekiabc_def", "abc_de", []int{1, 7, 15}},
 	}
 	for i, tc := range cases {
 		t.Run("case_"+strconv.Itoa(i), func(t *testing.T) {
 			got := stringIndexes(tc.s, tc.substr)
 			if len(got) != len(tc.indexes) {
-				t.Errorf("got %v but expected %v", got, tc.indexes)
+				t.Fatalf("got %v but expected %v", got, tc.indexes)
 			}
 			for j := range got {
 				if got[j] != tc.indexes[j] {
@@ -114,6 +115,45 @@ func TestReplaceCrops(t *testing.T) {
 			got := replaceCrops(tc.original, tc.files)
 			if got != tc.desired {
 				t.Errorf("got\n\t%v\nbut expected\n\t%v", got, tc.desired)
+			}
+		})
+	}
+}
+
+func TestFindSuitableCrop(t *testing.T) {
+	cases := []struct {
+		inPost       *crop
+		haveInBucket []crop
+		good         bool
+		okDiff       int
+	}{
+		{
+			inPost: &crop{"500x450", 500, 450},
+			haveInBucket: []crop{
+				{"500x450", 500, 450},
+				{"400x330", 400, 330},
+			},
+			good:   true,
+			okDiff: -1,
+		},
+		{
+			inPost: &crop{"500x450", 500, 450},
+			haveInBucket: []crop{
+				{"510x460", 510, 460},
+				{"400x330", 400, 330},
+			},
+			good:   false,
+			okDiff: 0,
+		},
+	}
+	for i, tc := range cases {
+		t.Run("case_"+strconv.Itoa(i), func(t *testing.T) {
+			good, okDiff := findSuitableCrop(tc.inPost, tc.haveInBucket)
+			if good != tc.good {
+				t.Errorf("got %v but expected %v for the bool", good, tc.good)
+			}
+			if okDiff != tc.okDiff {
+				t.Errorf("got %v but expected %v for the int", okDiff, tc.okDiff)
 			}
 		})
 	}

@@ -43,6 +43,8 @@ var (
 	noBucketPrefix = flag.Bool("nobucketprefix", false, "if true, then no bucket prefix is expected")
 
 	postType = flag.String("posttype", "post", "the post_type to transform")
+
+	widthDiffTolerance = flag.Float64("widthtolerance", 35.0, "the maximum tolerated difference in width between replaced images")
 )
 
 func init() {
@@ -383,9 +385,6 @@ func replaceCrops(content string, files []attachment) string {
 	return content
 }
 
-// widthDiffTolerance is the maximum tolerated difference in width between replaced images.
-const widthDiffTolerance float64 = 35.0
-
 func replaceContentSingle(content string, file *attachment) string {
 	trimmed := file.fileName[:len(file.fileName)-len(file.ext)] // removes the trailing dot and extension
 	lenTrimmed := len(trimmed)
@@ -429,7 +428,7 @@ func findSuitableCrop(inPost *crop, haveInBucket []crop) (good bool, okDiff int)
 			return
 		}
 		diff := math.Abs(float64(inPost.width)-float64(existing.width)) / float64(inPost.width) * 100.0
-		if diff <= widthDiffTolerance {
+		if diff <= *widthDiffTolerance {
 			okVariants = append(okVariants, variant{diff: diff, indx: i})
 		}
 	}

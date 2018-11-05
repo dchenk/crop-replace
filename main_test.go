@@ -98,13 +98,16 @@ func TestReplaceCrops(t *testing.T) {
 		files    []attachment
 		desired  string
 	}{
-		{"abc.png", atts, "abc.png"},                         // No replacement needed
-		{"<img src='abc.png'>", atts, "<img src='abc.png'>"}, // No replacement needed
-		{"abc-400x300.png", atts, "abc.png"},                 // Default to un-cropped
-		{"bcd-210x195.png", atts, "bcd-200x180.png"},
-		{"HELLO WORLD bcd-210x195.png", atts, "HELLO WORLD bcd-200x180.png"},
-		{"Hi: bcd-210x195.png\nText...", atts, "Hi: bcd-200x180.png\nText..."},
-		{"bcd-210x195.png\nText...", atts, "bcd-200x180.png\nText..."},
+		{"abc.png", atts, "abc.png"},                                         // No replacement needed
+		{"<img src='abc.png'>", atts, "<img src='abc.png'>"},                 // No replacement needed
+		{"abc-400x300.png", atts, "abc.png"},                                 // Default to un-cropped
+		{"bcd-30x15.png", atts, "bcd.png"},                                   // Default to un-cropped
+		{"bcd-210x195.png", atts, "bcd-200x180.png"},                         // Use close variant
+		{"bcd-520x305.png", atts, "bcd-400x320.png"},                         // Use close variant (30% wider)
+		{"jkljk-210x195.png", atts, "jkljk-210x195.png"},                     // No matching attachment
+		{"HELLO WORLD bcd-210x195.png", atts, "HELLO WORLD bcd-200x180.png"}, // Ignore surroundings
+		{"Hi: bcd-210x195.png\tText...", atts, "Hi: bcd-200x180.png\tText..."},
+		{"bcd-210x195.png\tText...", atts, "bcd-200x180.png\tText..."},
 	}
 	for i, tc := range cases {
 		t.Run("case_"+strconv.Itoa(i), func(t *testing.T) {

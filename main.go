@@ -393,25 +393,14 @@ func replaceContentSingle(content string, file *attachment) string {
 	for _, indx := range stringIndexes(content, trimmed) {
 		crop := getCropVariant(content[indx+lenTrimmed:], file.ext)
 		if crop != nil {
-			good := false
-			okDiff := -1
-			for i := range file.crops {
-				existing := &file.crops[i]
-				if crop.width == existing.width && crop.height == existing.height {
-					good = true
-					break
-				}
-				if math.Abs(float64(crop.width-existing.width)/float64(crop.width))*100.0 <= widthDiffTolerance {
-					okDiff = i
-				}
-			}
+			good, okDiff := findSuitableCrop(crop, file.crops)
 			if !good {
-				old := trimmed + crop.str + file.ext
-				// If there is no crop that's within the tolerated range, use the un-cropped variant.
+				old := trimmed + "-" + crop.str + file.ext
 				if okDiff > -1 {
 					fmt.Printf("Using width %v instead of %v for %s\n", file.crops[okDiff].width, crop.width, file.fileName)
-					replacements[old] = file.fileName
+					replacements[old] = trimmed + "-" + file.crops[okDiff].str + file.ext
 				} else {
+					// If there is no crop that's within the tolerated range, use the un-cropped variant.
 					replacements[old] = file.fileName
 				}
 			}
@@ -421,6 +410,42 @@ func replaceContentSingle(content string, file *attachment) string {
 		content = strings.Replace(content, origFile, newFile, -1)
 	}
 	return content
+}
+
+// findSuitableCrop checks if there is a suitable crop in the bucket for the crop found in a post.
+// If the crop in the post is already in the bucket, a true is returned. If there isn't, then okDiff is an index
+// to a close variant is returned if there is a close variant; otherwise the int returned is -1.
+func findSuitableCrop(inPost *crop, haveInBucket []crop) (good bool, okDiff int) {
+	okDiff = -1
+	type variant struct {
+		diff float64
+		indx int
+	}
+	var okVariants []variant
+	for i := range haveInBucket {
+		existing := &haveInBucket[i]
+		if inPost.width == existing.width && inPost.height == existing.height {
+			good = true
+			return
+		}
+		diff := math.Abs(float64(inPost.width-existing.width)/float64(inPost.width)) * 100.0
+		if diff <= widthDiffTolerance {
+			okVariants = append(okVariants, variant{diff: diff, indx: i})
+		}
+	}
+	// At this point, good == false and okDiff = -1.
+	if len(okVariants) > 0 {
+		// Find the closest variant.
+		okDiff = okVariants[0].indx
+		diff := okVariants[0].diff
+		for i := 1; i < len(okVariants); i++ {
+			if okVariants[i].diff < diff {
+				okDiff = okVariants[i].indx
+				diff = okVariants[i].diff
+			}
+		}
+	}
+	return
 }
 
 // stringIndexes returns the indexes of s at which there is substr.

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/go-sql-driver/mysql"
@@ -45,6 +46,8 @@ var (
 	postType = flag.String("posttype", "post", "the post_type to transform")
 
 	widthDiffTolerance = flag.Float64("widthtolerance", 35.0, "the maximum tolerated difference in width between replaced images")
+
+	verbose = flag.Bool("verbose", false, "verbose mode")
 )
 
 func init() {
@@ -315,8 +318,10 @@ func replaceImageCrops(db *sql.DB, postType string, files []attachment) error {
 	var rows *sql.Rows
 	var update *sql.Stmt
 	rollback := func(tx *sql.Tx) {
-		if err := update.Close(); err != nil {
-			printErr("closing prepared statement before rollback", err)
+		if update != nil {
+			if err := update.Close(); err != nil {
+				printErr("closing prepared statement before rollback", err)
+			}
 		}
 		if rows != nil {
 			if err := rows.Close(); err != nil {
@@ -331,31 +336,54 @@ func replaceImageCrops(db *sql.DB, postType string, files []attachment) error {
 	if err != nil {
 		return fmt.Errorf("could not begin transaction; %v", err)
 	}
+	var count int64
+	if err := tx.QueryRow(
+		fmt.Sprintf("SELECT COUNT(*) FROM `%s` WHERE post_type = ?", tableName()), postType).
+		Scan(&count); err != nil {
+		rollback(tx)
+		return fmt.Errorf("counting rows; %v", err)
+	}
+	type post struct {
+		ID      int64
+		content string
+	}
+	posts := make([]post, 0, count)
+	{
+		rows, err = tx.Query(fmt.Sprintf("SELECT ID, post_content FROM `%s` WHERE post_type = ? ORDER BY ID", tableName()),
+			postType)
+		if err != nil {
+			rollback(tx)
+			return fmt.Errorf("could not query for rows; %v", err)
+		}
+		var p post
+		for rows.Next() {
+			if err := rows.Scan(&p.ID, &p.content); err != nil {
+				rollback(tx)
+				return err
+			}
+			posts = append(posts, p)
+		}
+		if err := rows.Err(); err != nil {
+			rollback(tx)
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			printErr("closing rows before commit", err)
+		}
+	}
 	update, err = tx.Prepare(fmt.Sprintf("UPDATE `%s` SET post_content = ? WHERE ID = ?", tableName()))
 	if err != nil {
 		rollback(tx)
 		return fmt.Errorf("could not prepare update statement; %v", err)
 	}
-	rows, err = tx.Query(fmt.Sprintf("SELECT ID, post_content FROM `%s` WHERE post_type = ? ORDER BY ID", tableName()),
-		postType)
-	if err != nil {
-		rollback(tx)
-		return fmt.Errorf("could not query for rows; %v", err)
-	}
-	for rows.Next() {
-		var ID int64
-		var content string
-		if err := rows.Scan(&ID, &content); err != nil {
-			rollback(tx)
-			return err
-		}
-		got := replaceCrops(content, files)
-		if got != content {
-			fmt.Println("Updating", ID)
-			res, err := update.Exec(got, ID)
+	for i := range posts {
+		got := replaceCrops(posts[i].content, files)
+		if got != posts[i].content {
+			fmt.Println("Updating", posts[i].ID)
+			res, err := update.Exec(got, posts[i].ID)
 			if err != nil {
 				rollback(tx)
-				return fmt.Errorf("could not update row %d; %v", ID, err)
+				return fmt.Errorf("could not update row %d; %v", posts[i].ID, err)
 			}
 			affected, err := res.RowsAffected()
 			if err != nil {
@@ -368,13 +396,7 @@ func replaceImageCrops(db *sql.DB, postType string, files []attachment) error {
 			}
 		}
 	}
-	if err := rows.Err(); err != nil {
-		rollback(tx)
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		printErr("closing rows before commit", err)
-	}
+	fmt.Println("Committing database modifications.")
 	return tx.Commit()
 }
 
@@ -406,6 +428,7 @@ func replaceContentSingle(content string, file *attachment) string {
 		}
 	}
 	for origFile, newFile := range replacements {
+		fmt.Printf("Replacing %q with %q\n", origFile, newFile)
 		content = strings.Replace(content, origFile, newFile, -1)
 	}
 	return content
@@ -482,6 +505,7 @@ func makeConn(host, dbName, user, pass string) *sql.DB {
 		printErr("connecting to database", err)
 		os.Exit(1)
 	}
+	db.SetConnMaxLifetime(time.Minute * 15)
 	return db
 }
 
